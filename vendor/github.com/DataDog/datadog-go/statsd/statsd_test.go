@@ -33,6 +33,7 @@ var dogstatsdTests = []struct {
 	{"", nil, "Set", "test.set", "uuid", []string{"tagA"}, 1.0, "test.set:uuid|s|#tagA"},
 	{"flubber.", nil, "Set", "test.set", "uuid", []string{"tagA"}, 1.0, "flubber.test.set:uuid|s|#tagA"},
 	{"", []string{"tagC"}, "Set", "test.set", "uuid", []string{"tagA"}, 1.0, "test.set:uuid|s|#tagC,tagA"},
+	{"", nil, "Count", "test.count", int64(1), []string{"hello\nworld"}, 1.0, "test.count:1|c|#helloworld"},
 }
 
 func assertNotPanics(t *testing.T, f func()) {
@@ -337,15 +338,94 @@ func TestJoinMaxSize(t *testing.T) {
 	}
 }
 
-func testSendMsg(t *testing.T) {
-	c := Client{bufferLength: 1}
-	err := c.sendMsg(strings.Repeat("x", OptimalPayloadSize))
+func TestSendMsg(t *testing.T) {
+	addr := "localhost:1201"
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		t.Errorf("Expected no error to be returned if message size is smaller or equal to MaxPayloadSize, got: %s", err.Error())
+		t.Fatal(err)
 	}
-	err = c.sendMsg(strings.Repeat("x", OptimalPayloadSize+1))
+
+	server, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	client := &Client{
+		conn:         conn,
+		bufferLength: 0,
+	}
+
+	err = client.sendMsg(strings.Repeat("x", MaxUDPPayloadSize+1))
 	if err == nil {
-		t.Error("Expected error to be returned if message size is bigger that MaxPayloadSize")
+		t.Error("Expected error to be returned if message size is bigger than MaxUDPPayloadSize")
+	}
+
+	longMsg := strings.Repeat("x", MaxUDPPayloadSize)
+
+	err = client.sendMsg(longMsg)
+	if err != nil {
+		t.Errorf("Expected no error to be returned if message size is smaller or equal to MaxUDPPayloadSize, got: %s", err.Error())
+	}
+
+	buffer := make([]byte, MaxUDPPayloadSize+1)
+	n, err := io.ReadAtLeast(server, buffer, 1)
+
+	if err != nil {
+		t.Fatalf("Expected no error to be returned reading the buffer, got: %s", err.Error())
+	}
+
+	if n != MaxUDPPayloadSize {
+		t.Fatalf("Failed to read full message from buffer. Got size `%d` expected `%d`", n, MaxUDPPayloadSize)
+	}
+
+	if string(buffer[:n]) != longMsg {
+		t.Fatalf("The received message did not match what we expect.")
+	}
+
+	client = &Client{
+		conn:         conn,
+		commands:     make([]string, 0, 1),
+		bufferLength: 1,
+	}
+
+	err = client.sendMsg(strings.Repeat("x", MaxUDPPayloadSize+1))
+	if err == nil {
+		t.Error("Expected error to be returned if message size is bigger than MaxUDPPayloadSize")
+	}
+
+	err = client.sendMsg(longMsg)
+	if err != nil {
+		t.Errorf("Expected no error to be returned if message size is smaller or equal to MaxUDPPayloadSize, got: %s", err.Error())
+	}
+
+	client.Lock()
+	err = client.flush()
+	client.Unlock()
+
+	if err != nil {
+		t.Fatalf("Expected no error to be returned flushing the client, got: %s", err.Error())
+	}
+
+	buffer = make([]byte, MaxUDPPayloadSize+1)
+	n, err = io.ReadAtLeast(server, buffer, 1)
+
+	if err != nil {
+		t.Fatalf("Expected no error to be returned reading the buffer, got: %s", err.Error())
+	}
+
+	if n != MaxUDPPayloadSize {
+		t.Fatalf("Failed to read full message from buffer. Got size `%d` expected `%d`", n, MaxUDPPayloadSize)
+	}
+
+	if string(buffer[:n]) != longMsg {
+		t.Fatalf("The received message did not match what we expect.")
 	}
 }
 
@@ -357,6 +437,7 @@ func TestNilSafe(t *testing.T) {
 	assertNotPanics(t, func() { c.Gauge("", 0, nil, 1) })
 	assertNotPanics(t, func() { c.Set("", "", nil, 1) })
 	assertNotPanics(t, func() { c.send("", "", nil, 1) })
+	assertNotPanics(t, func() { c.SimpleEvent("", "") })
 }
 
 func TestEvents(t *testing.T) {
@@ -379,6 +460,9 @@ func TestEvents(t *testing.T) {
 		}, {
 			&Event{Title: "hi", Text: "uh", Tags: []string{"host:foo", "app:bar"}},
 			`_e{2,2}:hi|uh|#host:foo,app:bar`,
+		}, {
+			&Event{Title: "hi", Text: "line1\nline2", Tags: []string{"hello\nworld"}},
+			`_e{2,12}:hi|line1\nline2|#helloworld`,
 		},
 	}
 
@@ -447,7 +531,7 @@ func TestServiceChecks(t *testing.T) {
 			&ServiceCheck{Name: "DataCatService", Status: Ok, Hostname: "DataStation.Cat", Message: "Here goes valuable message", Tags: []string{"host:foo", "app:bar"}},
 			`_sc|DataCatService|0|h:DataStation.Cat|#host:foo,app:bar|m:Here goes valuable message`,
 		}, {
-			&ServiceCheck{Name: "DataCatService", Status: Ok, Hostname: "DataStation.Cat", Message: "Here goes \n that should be escaped", Tags: []string{"host:foo", "app:bar"}},
+			&ServiceCheck{Name: "DataCatService", Status: Ok, Hostname: "DataStation.Cat", Message: "Here goes \n that should be escaped", Tags: []string{"host:foo", "app:b\nar"}},
 			`_sc|DataCatService|0|h:DataStation.Cat|#host:foo,app:bar|m:Here goes \n that should be escaped`,
 		}, {
 			&ServiceCheck{Name: "DataCatService", Status: Ok, Hostname: "DataStation.Cat", Message: "Here goes m: that should be escaped", Tags: []string{"host:foo", "app:bar"}},
@@ -471,7 +555,7 @@ func TestServiceChecks(t *testing.T) {
 		t.Errorf("Expected error on empty Name.")
 	}
 
-	sc = NewServiceCheck("sc", serviceCheckStatus(5))
+	sc = NewServiceCheck("sc", ServiceCheckStatus(5))
 	if _, err := sc.Encode(); err == nil {
 		t.Errorf("Expected error on invalid status value.")
 	}

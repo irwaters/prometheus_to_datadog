@@ -62,8 +62,8 @@ func (flags *Queries) Set(value string) error {
 }
 
 var (
-	dogstatsd_addr  = flag.String("dogstatsd-address", "127.0.0.1:8125", "The address to send dogstatsd metrics to.")
-	prometheus_addr = flag.String("prometheus-address", "127.0.0.1:9090", "The prometheus address")
+	dogstatsd_addr  = flag.String("dogstatsd-address", "169.254.1.1:8125", "The address to send dogstatsd metrics to.")
+	prometheus_addr = flag.String("prometheus-address", "prometheus.default.svc.cluster.local:9090", "The prometheus address")
 	listen_addr     = flag.String("listen-address", ":9132", "HTTP address to listen on to publish internal metrics.")
 	interval        = flag.Int("interval", 10, "Frequency to query Prometheus (in seconds)")
 	queries         Queries
@@ -178,7 +178,7 @@ func main() {
 	}
 	defer statsd_client.Close()
 
-	statsd_client.Namespace = "prometheus."
+	statsd_client.Namespace = "kubernetes.prometheus."
 
 	prometheus_config := prometheus.Config{Address: *prometheus_addr}
 	prometheus_client, err := prometheus.New(prometheus_config)
