@@ -64,7 +64,7 @@ func (flags *Queries) Set(value string) error {
 var (
 	dogstatsd_addr  = flag.String("dogstatsd-address", "169.254.1.1:8125", "The address to send dogstatsd metrics to.")
 	prometheus_addr = flag.String("prometheus-address", "prometheus.default.svc.cluster.local:9090", "The prometheus address")
-	listen_addr     = flag.String("listen-address", ":9132", "HTTP address to listen on to publish internal metrics.")
+	listen_addr     = flag.String("listen-address", ":4242", "HTTP address to listen on to publish internal metrics.")
 	interval        = flag.Int("interval", 10, "Frequency to query Prometheus (in seconds)")
 	queries         Queries
 )

@@ -7,5 +7,5 @@ WORKDIR /app
 
 ADD bin /app/bin
 
-EXPOSE 9132
+EXPOSE 4242
 CMD bin/prom_to_datadog
